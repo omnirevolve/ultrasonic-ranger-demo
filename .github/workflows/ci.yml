@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  lint-and-build-userland:
+    name: Lint & Build (userspace)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential pkg-config
+          sudo apt-get install -y libgpiod-dev
+
+      - name: Configure & build (root CMake)
+        run: |
+          cmake -B build -S .
+          cmake --build build -j
+
+      - name: Build tools/isotp_rx (standalone CMake)
+        run: |
+          cmake -B build-tools-isotp tools/isotp_rx
+          cmake --build build-tools-isotp -j
+
+      - name: Smoke test binaries exist
+        shell: bash
+        run: |
+          set -e
+          test -x build/ranger-u/ranger-u || { echo "ranger-u missing"; exit 1; }
+          ISO=build-tools-isotp/isotp_rx/isotp_rx
+          # fallback via find in case CMake layout changes
+          if [ ! -x "$ISO" ]; then
+            ISO=$(find build-tools-isotp -type f -name isotp_rx -perm -111 -print -quit)
+          fi
+          test -n "$ISO" && test -x "$ISO" || { echo "isotp_rx missing"; exit 1; }
+          echo "OK: $ISO"
+
+      - name: Upload userspace artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: userspace-binaries
+          path: |
+            build/ranger-u/ranger-u
+            build-tools-isotp/**/isotp_rx
+
+  build-kmod:
+    name: Build kernel module (best-effort)
+    runs-on: ubuntu-22.04
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install headers & tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential linux-headers-$(uname -r) || true
+          sudo apt-get install -y linux-headers-generic || true
+
+      - name: Build kmod
+        working-directory: ranger-k
+        shell: bash
+        run: |
+          set -e
+          echo "[ls] ranger-k contents:"; ls -la
+          if [ ! -f Makefile ]; then
+            echo "[info] Makefile not found, generating minimal kbuild Makefile"
+            printf '%s\n' \
+              'obj-m := ranger_k.o' \
+              'KDIR ?= /lib/modules/$(shell uname -r)/build' \
+              'all:' \
+              '	$(MAKE) -C $(KDIR) M=$(PWD) modules' \
+              'clean:' \
+              '	$(MAKE) -C $(KDIR) M=$(PWD) clean' > Makefile
+          fi
+          make -j V=1 || make V=1
+
+      - name: Upload kmod artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ranger_k.ko
+          path: ranger-k/ranger_k.ko
+          if-no-files-found: ignore
