@@ -1,0 +1,1 @@
+savedcmd_/home/darimdada/work/rpi5-ultrasonic/ranger-k/ranger_k.ko := ld -r -m elf_x86_64 -z noexecstack --build-id=sha1  -T scripts/module.lds -o /home/darimdada/work/rpi5-ultrasonic/ranger-k/ranger_k.ko /home/darimdada/work/rpi5-ultrasonic/ranger-k/ranger_k.o /home/darimdada/work/rpi5-ultrasonic/ranger-k/ranger_k.mod.o

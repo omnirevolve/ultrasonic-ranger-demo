@@ -1,0 +1,1 @@
+savedcmd_/home/darimdada/work/rpi5-ultrasonic/ranger-k/Module.symvers :=  scripts/mod/modpost -M -m -a      -o /home/darimdada/work/rpi5-ultrasonic/ranger-k/Module.symvers -T /home/darimdada/work/rpi5-ultrasonic/ranger-k/modules.order -i Module.symvers -e 

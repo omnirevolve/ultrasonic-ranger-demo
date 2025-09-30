@@ -1,0 +1,9 @@
+version: "3.8"
+services:
+  dev:
+    build: ../docker
+    privileged: true
+    volumes:
+      - ..:/workspace
+    working_dir: /workspace
+    command: bash -lc "./scripts/setup_sim.sh && cmake -S . -B build && cmake --build build"

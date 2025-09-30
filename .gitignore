@@ -1,0 +1,50 @@
+# build outputs
+/build/
+/**/build/
+
+# cmake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.cmake
+*.mark*
+
+# kernel module byproducts
+ranger-k/*.o
+ranger-k/*.ko
+ranger-k/*.mod
+ranger-k/*.mod.*
+ranger-k/Module.symvers
+ranger-k/modules.order
+
+# compiled objects
+**/*.o
+**/*.a
+**/*.so
+**/*.d
+**/*.out
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+.venv*/
+pip-wheel-metadata/
+
+# editors / ide
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# generated data/logs
+*.log
+*.csv
+*.jsonl

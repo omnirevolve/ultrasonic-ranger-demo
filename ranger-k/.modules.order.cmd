@@ -1,0 +1,1 @@
+savedcmd_/home/darimdada/work/rpi5-ultrasonic/ranger-k/modules.order := {   echo /home/darimdada/work/rpi5-ultrasonic/ranger-k/ranger_k.o; :; } > /home/darimdada/work/rpi5-ultrasonic/ranger-k/modules.order
