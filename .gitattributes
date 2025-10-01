@@ -1,0 +1,12 @@
+﻿* text=auto eol=lf
+
+*.c     text eol=lf
+*.h     text eol=lf
+*.sh    text eol=lf
+*.txt   text eol=lf
+*.md    text eol=lf
+
+*.png   -text
+*.jpg   -text
+*.pdf   -text
+*.zip   -text

@@ -2,11 +2,13 @@
 /*
  * ranger_k - IRQ/timestamp MVP (gpio-sim + threaded IRQ)
  *
- * - Берём пять ECHO-линий по legacy GPIO номерам (module param line_gpios=...),
- *   либо автоматически 768..772 для gpio-sim (label="gpio-sim.0-node0").
- * - Явно запрашиваем линии как input (gpio_request_one).
- * - Вешаем threaded IRQ на оба фронта; в обработчике считаем ширину импульса
- *   и конвертируем в дистанцию (микрометры), публикуем через debugfs.
+ * Summary:
+ * - Uses five ECHO lines specified by legacy GPIO numbers via module param
+ *   line_gpios=..., or auto-selects 768..772 when a gpio-sim chip with
+ *   label "gpio-sim.0-node0" is present.
+ * - Explicitly requests lines as inputs (gpio_request_one).
+ * - Attaches a threaded IRQ on both edges; the handler measures pulse width
+ *   and converts it to distance (micrometers), exposing data via debugfs.
  */
 
 #include <linux/module.h>
@@ -28,7 +30,10 @@
 #define DRV_NAME    "ranger_k"
 #define MAX_SENSORS 5
 
-/* Параметры: либо задаём все пять номеров, либо оставляем -1 для авто 768.. */
+/* Module parameters:
+ * Either provide all five legacy GPIO numbers or leave entries as -1
+ * to auto-detect the gpio-sim base and use base..base+4 (typically 768..772).
+ */
 static int line_gpios[MAX_SENSORS] = { -1, -1, -1, -1, -1 };
 module_param_array(line_gpios, int, NULL, 0444);
 MODULE_PARM_DESC(line_gpios, "Legacy GPIO numbers for ECHO lines (5 items)");
@@ -36,21 +41,23 @@ MODULE_PARM_DESC(line_gpios, "Legacy GPIO numbers for ECHO lines (5 items)");
 struct sensor_state {
 	bool have_rise;
 	ktime_t rise_ts;
-	u32 dist_um;   /* последняя дистанция (микрометры) */
-	u32 pulses;    /* успешно измеренные импульсы */
-	u32 overruns;  /* падение без предыдущего подъёма */
+	u32 dist_um;   /* last measured distance (micrometers) */
+	u32 pulses;    /* successfully measured pulses */
+	u32 overruns;  /* falling edge without a prior rising edge */
 	int irq;
 	struct gpio_desc *gdesc;
 };
 
 static struct {
 	struct dentry *dbg_dir;
-	spinlock_t lock; /* защищает s[] и seq */
+	spinlock_t lock; /* protects s[] and seq */
 	struct sensor_state s[MAX_SENSORS];
 	u32 seq;
 } g;
 
-/* ns -> um: distance_um = t * 171500 / 1e6  (c=343 m/s, делим пополам) */
+/* ns -> um: distance_um = t * 171500 / 1e6
+ * (speed of sound ≈ 343 m/s, divide by 2 for round trip)
+ */
 static inline u32 width_ns_to_um(s64 width_ns)
 {
 	return (u32)div64_u64((u64)width_ns * 171500ULL, 1000000ULL);
@@ -118,8 +125,8 @@ static const struct file_operations stats_fops = {
 };
 
 /* === threaded IRQ handler ===
- * Используем только потоковый обработчик (primary=NULL), чтобы можно было
- * вызывать *_cansleep() и не трогать fastpath контроллера.
+ * Use a threaded-only handler (primary=NULL) so we can call *_cansleep()
+ * and avoid touching the interrupt controller fast path.
  */
 static irqreturn_t echo_irq_thread(int irq, void *dev_id)
 {
@@ -131,11 +138,11 @@ static irqreturn_t echo_irq_thread(int irq, void *dev_id)
 
 	spin_lock_irqsave(&g.lock, flags);
 	if (level) {
-		/* Rising */
+		/* Rising edge */
 		s->have_rise = true;
 		s->rise_ts = now;
 	} else {
-		/* Falling */
+		/* Falling edge */
 		if (s->have_rise) {
 			s64 dt = ktime_to_ns(ktime_sub(now, s->rise_ts));
 			s->have_rise = false;
@@ -151,7 +158,7 @@ static irqreturn_t echo_irq_thread(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-/* Автопоиск gpio-sim базы: label == "gpio-sim.0-node0" → base */
+/* Auto-scan a gpio-sim chip: label == "gpio-sim.0-node0" → base */
 static int autoscan_gpio_sim_base(int *base_out, int *ngpio_out)
 {
 	struct file *f;
@@ -171,7 +178,7 @@ static int autoscan_gpio_sim_base(int *base_out, int *ngpio_out)
 		kernel_read(f, lbl, sizeof(lbl)-1, &f->f_pos);
 		filp_close(f, NULL);
 
-		/* Найдём base */
+		/* Read base */
 		snprintf(path, sizeof(path), "/sys/class/gpio/gpiochip%d/base", 512 + chip*256);
 		f = filp_open(path, O_RDONLY, 0);
 		if (IS_ERR(f))
@@ -183,7 +190,7 @@ static int autoscan_gpio_sim_base(int *base_out, int *ngpio_out)
 		}
 		filp_close(f, NULL);
 
-		/* и ngpio */
+		/* Read ngpio */
 		snprintf(path, sizeof(path), "/sys/class/gpio/gpiochip%d/ngpio", 512 + chip*256);
 		f = filp_open(path, O_RDONLY, 0);
 		if (IS_ERR(f))
@@ -196,8 +203,8 @@ static int autoscan_gpio_sim_base(int *base_out, int *ngpio_out)
 		filp_close(f, NULL);
 
 		if (strnstr(lbl, "gpio-sim.0-node0", sizeof(lbl))) {
-			*base_out  = base;   /* ожидаем 768 */
-			*ngpio_out = ngpio;  /* ожидаем 8   */
+			*base_out  = base;   /* typically 768 */
+			*ngpio_out = ngpio;  /* typically 8   */
 			return 0;
 		}
 	}
@@ -210,7 +217,7 @@ static int __init ranger_k_init(void)
 
 	spin_lock_init(&g.lock);
 
-	/* Если параметры не заданы — попробуем авто 768..772 */
+	/* If no params are provided, try auto 768..772 via gpio-sim scan */
 	bool need_auto = true;
 	for (int i = 0; i < MAX_SENSORS; i++)
 		if (line_gpios[i] >= 0) { need_auto = false; break; }
@@ -233,20 +240,20 @@ static int __init ranger_k_init(void)
 	pr_info(DRV_NAME ": params line_gpios={%d,%d,%d,%d,%d}\n",
 	        line_gpios[0], line_gpios[1], line_gpios[2], line_gpios[3], line_gpios[4]);
 
-	/* Инициализация каждой линии */
+	/* Per-line initialization */
 	for (int i = 0; i < MAX_SENSORS; i++) {
 		int gpio = line_gpios[i];
 		if (gpio < 0)
 			continue;
 
-		/* 1) Явно запросить линию как input */
+		/* 1) Explicitly request the line as input */
 		ret = gpio_request_one(gpio, GPIOF_IN, DRV_NAME);
 		if (ret) {
 			pr_err(DRV_NAME ": gpio_request_one(%d) failed: %d\n", gpio, ret);
 			goto fail;
 		}
 
-		/* 2) Получить дескриптор/IRQ */
+		/* 2) Get descriptor and IRQ */
 		g.s[i].gdesc = gpio_to_desc(gpio);
 		if (!g.s[i].gdesc) {
 			pr_err(DRV_NAME ": gpio_to_desc(%d) failed\n", gpio);
@@ -254,7 +261,7 @@ static int __init ranger_k_init(void)
 			goto fail;
 		}
 
-		/* legacy: direction уже input; но на всякий случай: */
+		/* Legacy API note: direction is already input; enforce for safety */
 		ret = gpiod_direction_input(g.s[i].gdesc);
 		if (ret) {
 			pr_err(DRV_NAME ": gpiod_direction_input(%d) failed\n", gpio);
@@ -268,7 +275,7 @@ static int __init ranger_k_init(void)
 			goto fail;
 		}
 
-		/* 3) Потоковое IRQ на оба фронта */
+		/* 3) Threaded IRQ on both edges */
 		ret = request_threaded_irq(g.s[i].irq,
 		                           /*primary*/NULL,
 		                           /*thread */echo_irq_thread,

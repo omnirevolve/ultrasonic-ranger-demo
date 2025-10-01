@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-CHIP=/sys/devices/platform/gpio-sim.0/gpiochip1  # у тебя так
+CHIP=/sys/devices/platform/gpio-sim.0/gpiochip1
 LINE=${1:-0}
 P="$CHIP/sim_gpio${LINE}/pull"
 [[ -e "$P" ]] || { echo "[!] $P not found"; exit 1; }

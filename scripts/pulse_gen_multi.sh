@@ -4,8 +4,9 @@
 #   sudo ./scripts/pulse_gen_multi.sh "0:1.0,1:1.6,2:0.8,3:2.2,4:0.35"
 # Env:
 #   DEBUG=1     # optional verbose logs
+#
+# Note: we intentionally avoid `set -e`/`pipefail` to keep running despite single write errors.
 
-# Не используем -e и pipefail, чтобы не вылетать из-за единичных ошибок
 set -u
 export LC_ALL=C
 
@@ -19,7 +20,7 @@ GAP_S=0.002          # 2 ms gap between lines (readability)
 cleanup() { [ "${DEBUG:-0}" != "0" ] && echo "[i] exit"; }
 trap 'cleanup; exit 0' INT TERM
 
-# --- find gpio-sim chip path (ждём до 3с, если не готов) ---
+# --- find gpio-sim chip path (wait up to 3s if not ready) ---
 find_chip_dir() {
   local tries=30
   while [ $tries -gt 0 ]; do
@@ -63,7 +64,7 @@ fi
 
 # --- helpers ---
 write_pull() {
-  # Возвращаем 0/1, но не роняем сценарий
+  # Return 0/1 without aborting the script.
   local pull="$1" value="$2"
   if ! printf "%s" "$value" > "$pull" 2>/dev/null; then
     [ "${DEBUG:-0}" != "0" ] && echo "[warn] write '$value' to $pull failed"
